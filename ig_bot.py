@@ -12,7 +12,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from selenium.webdriver.common.keys import Keys
 
---- কনফিগারেশন (আপনার Termux পথ অনুযায়ী) ---
+#--- কনফিগারেশন (আপনার Termux পথ অনুযায়ী) ---
 
 API = "https://api.edu-mails.com/api"
 SIGNUP_URL = "https://www.instagram.com/accounts/emailsignup/"
