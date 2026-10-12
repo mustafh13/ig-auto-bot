@@ -115,15 +115,6 @@ def perform_instagram_signup(driver, email_address, full_name, password):
     """Instagram সাইনআপ ফর্ম ফিল করে সাবমিট করে"""
     try:
         driver.get(SIGNUP_URL)
-        # ইমেইল ইনপুট বক্স আসা পর্যন্ত অপেক্ষা
-        WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.NAME, "email"))
-        )
-
-        # ইমেইল ফিল করা
-        email_input = driver.find_element(By.NAME, "email")
-        email_input.clear()
-        email_input.send_keys(email_address)
 
         # নামের ফিল্ড (কিছু পেজে নাম আগে চাই, কিছু পেজে পরে)
         try:
@@ -142,23 +133,34 @@ def perform_instagram_signup(driver, email_address, full_name, password):
             except:
                 pass  # যদি নামের ফিল্ড নাও থাকে, টেনশন নেই
 
-        # পাসওয়ার্ড ফিল করা
-        password_input = driver.find_element(By.NAME, "pass")
+        # ইমেইল ইনপুট বক্স খুঁজে পাওয়া পর্যন্ত অপেক্ষা
+        email_input = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.NAME, "email"))
+        )
+        email_input.clear()
+        email_input.send_keys(email_address)
+
+        # পাসওয়ার্ড ইনপুট বক্স খুঁজে পাওয়া পর্যন্ত অপেক্ষা
+        password_input = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.NAME, "password"))
+        )
+        password_input.clear()
         password_input.send_keys(password)
 
-        # সাবমিট বাটন খোঁজা
-        try:
-            submit_btn = driver.find_element(By.XPATH, "//button[contains(@class, 'sqdOP') and contains(@class, 'L3NKy')]")
-            submit_btn.click()
-        except:
-            # ব্যাকআপ প্ল্যান: সাধারণ সাবমিট বাটন
-            driver.find_element(By.XPATH, "//button[@type='submit']").click()
+        # সাবমিট বাটন খুঁজে পাওয়া পর্যন্ত অপেক্ষা
+        submit_btn = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.NAME, "signup-button"))
+        )
+        submit_btn.click()
 
-        print("ফর্ম সাবমিট করা হয়েছে। OTP পেজের জন্য অপেক্ষা করছি...")
+        print("সাইনআপ ফর্ম সাবমিট করা হয়েছে।")
         return True
 
+    except TimeoutException:
+        print("সমস্যা: ইনস্টাগ্রামের ফর্ম লোড হতে বেশি সময় নিচ্ছে।")
+        return False
     except Exception as e:
-        print(f"সাইনআপ অটোমেশন এরর: {e}")
+        print(f"সাইনআপ অটোমেশন এরর: {type(e).__name__}: {e}")
         return False
 
 def handle_otp_verification(driver, inbox_info, timeout_seconds=90):
