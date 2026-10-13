@@ -9,24 +9,18 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
-from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException
 
-#--- কনফিগারেশন (আপনার Termux পথ অনুযায়ী) ---
-
+# --- কনফিগারেশন ---
 API = "https://api.edu-mails.com/api"
 SIGNUP_URL = "https://www.instagram.com/accounts/emailsignup/"
 
-# Termux-এ Chromium এবং ChromeDriver-এর লোকেশন
-# যদি আপনার পথ আলাদা হয়, তবে এখানে পরিবর্তন করুন
-
+# Termux পথ (আপনার সিস্টেম অনুযায়ী পরিবর্তন করুন)
 CHROMIUM = "/data/data/com.termux/files/usr/bin/chromium-browser"
 CHROMEDRIVER = "/data/data/com.termux/files/usr/bin/chromedriver"
 
-# --- API ফাংশন ---
-
 def create_email():
-    """EduMails API থেকে নতুন ইমেইল তৈরি করে"""
+    """ইমেইল জেনারেট করে"""
     try:
         response = requests.post(
             f"{API}/emails/generate",
@@ -38,20 +32,19 @@ def create_email():
         result = response.json()
 
         if result.get("status") != "success":
-            raise RuntimeError(f"Email API Error: {result}")
+            raise RuntimeError(f"API Error: {result}")
 
         email_data = result["data"]["email"]
         return {
             "address": email_data["address"],
-            "uuid": email_data["uuid"],
-            "has_password": email_data.get("has_password", False)
+            "uuid": email_data["uuid"]
         }
     except Exception as e:
-        print(f"ইমেইল তৈরিতে সমস্যা: {e}")
+        print(f"ইমেইল জেনারেট করতে সমস্যা: {e}")
         return None
 
 def fetch_inbox_messages(inbox_info):
-    """ইনবক্স থেকে মেসেজগুলো আনে"""
+    """ইনবক্স চেক করে"""
     headers = {"Accept": "application/json"}
     try:
         response = requests.get(
@@ -66,232 +59,225 @@ def fetch_inbox_messages(inbox_info):
         return []
 
 def extract_otp_from_message(message_body):
-    """ইমেইল বডি থেকে OTP কোড বের করে"""
+    """মেসেজ থেকে OTP বের করে"""
     if not message_body:
         return None
-
-    # HTML ট্যাগগুলো সরিয়ে শুধু টেক্সট রাখে
+    
+    # HTML ট্যাগ রিমুভ
     text = re.sub(r"<[^>]+>", " ", message_body)
     text = unescape(text)
     text = re.sub(r"\s+", " ", text).strip()
 
-    # Regex দিয়ে ৬ ডিজিটের কোড খোঁজা
-    # প্যাটার্ন ১: "Your code is 123456" এর মতো
-    match = re.search(r'code\s*(?:is|:)?\s*(\d{6})', text, re.IGNORECASE)
+    # ৬ ডিজিটের OTP খোঁজা (সবচেয়ে নির্ভরযোগ্য প্যাটার্ন)
+    match = re.search(r'\b(\d{6})\b', text)
     if match:
         return match.group(1)
-
-    # প্যাটার্ন ২: টেক্সটের মাঝে যেকোনো ৬ ডিজিটের সংখ্যা
-    match = re.search(r'\b(\d{6})\b', text)
+    
+    # যদি ৬ ডিজিট না পাওয়া যায়, তবে ৪ বা ৫ ডিজিটও চেক করা যেতে পারে (ইনস্টাগ্রাম কখনো কখনো ৪ ডিজিট দেয়)
+    match = re.search(r'\b(\d{4})\b', text)
     if match:
         return match.group(1)
 
     return None
 
-# --- Selenium Automation ---
-
 def setup_driver():
-    """Headless Chromium ব্রাউজার সেটআপ করে"""
-    if not os.path.isfile(CHROMIUM):
-        raise FileNotFoundError("Chromium পাওয়া যায়নি। পথ চেক করুন।")
-    if not os.path.isfile(CHROMEDRIVER):
-        raise FileNotFoundError("ChromeDriver পাওয়া যায়নি। পথ চেক করুন।")
-
+    """ব্রাউজার সেটআপ"""
     options = Options()
     options.binary_location = CHROMIUM
-    options.add_argument("--headless")
+    
+    # টার্মুক্ষের জন্য জরুরি ফ্ল্যাগ
+    options.add_argument("--headless=new") # নতুন হেডলেস মোড
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--window-size=1920,1080")
+    
+    # ইউজার এজেন্ট
+    options.add_argument("user-agent=Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
 
-    # (3/5) # ইউজার এজেন্ট সেট করা যাতে মোবাইল বা ডেস্কটপ ব্লক না করে
-    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
-    driver = webdriver.Chrome(service=Service(CHROMEDRIVER), options=options)
-    return driver
+    try:
+        driver = webdriver.Chrome(service=Service(CHROMEDRIVER), options=options)
+        return driver
+    except Exception as e:
+        print(f"ব্রাউজার চালু করতে সমস্যা: {e}")
+        return None
 
 def perform_instagram_signup(driver, email_address, full_name, password):
-    """Instagram সাইনআপ ফর্ম ফিল করে সাবমিট করে"""
+    """সাইনআপ ফর্ম পূরণ"""
     try:
         driver.get(SIGNUP_URL)
+        
+        # পেজ লোড হওয়ার জন্য অপেক্ষা
+        time.sleep(3)
 
-        # নামের ফিল্ড (কিছু পেজে নাম আগে চাই, কিছু পেজে পরে)
+        # ১. নাম ইনপুট (Name Field)
+        # ইনস্টাগ্রামে নামের ফিল্ড সাধারণত 'name' নাম অ্যাট্রিবিউটযুক্ত হয় বা class='...input'
         try:
-            # যদি আলাদা First/Last Name ফিল্ড থাকে
-            first_name = driver.find_element(By.NAME, "firstName")
-            last_name = driver.find_element(By.NAME, "lastName")
-            name_parts = full_name.split()
-            first_name.send_keys(name_parts[0])
-            if len(name_parts) > 1:
-                last_name.send_keys(name_parts[1])
+            name_input = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.NAME, "name")) # অনেক সময় 'name' ব্যবহার করে একাধিক ফিল্ডের জন্য
+            )
+            # যদি 'name' না পাওয়া যায়, তাহলে 'fullName' চেষ্টা করি
         except NoSuchElementException:
-            # যদি একসাথে Full Name ফিল্ড থাকে
-            try:
-                full_name_input = driver.find_element(By.NAME, "fullName")
-                full_name_input.send_keys(full_name)
-            except:
-                pass  # যদি নামের ফিল্ড নাও থাকে, টেনশন নেই
+             name_input = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.NAME, "fullName"))
+            )
+        
+        name_input.clear()
+        name_input.send_keys(full_name)
+        time.sleep(1)
 
-        # ইমেইল ইনপুট বক্স খুঁজে পাওয়া পর্যন্ত অপেক্ষা
-        email_input = WebDriverWait(driver, 15).until(
+        # ২. ইমেইল ইনপুট
+        email_input = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.NAME, "email"))
         )
         email_input.clear()
         email_input.send_keys(email_address)
+        time.sleep(1)
 
-        # পাসওয়ার্ড ইনপুট বক্স খুঁজে পাওয়া পর্যন্ত অপেক্ষা
-        password_input = WebDriverWait(driver, 15).until(
+        # ৩. পাসওয়ার্ড ইনপুট
+        password_input = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.NAME, "password"))
         )
         password_input.clear()
         password_input.send_keys(password)
+        time.sleep(1)
 
-        # সাবমিট বাটন খুঁজে পাওয়া পর্যন্ত অপেক্ষা
-        submit_btn = WebDriverWait(driver, 15).until(
-            EC.element_to_be_clickable((By.NAME, "signup-button"))
+        # ৪. সাবমিট বাটন ক্লিক
+        # সাবমিট বাটনের ক্লাস পরিবর্তনশীল, তাই XPath দিয়ে 'type="submit"' বা class চেক করা নিরাপদ
+        submit_btn = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, "//button[contains(@class, 'sqdOP') and contains(@class, 'L3NKy')]"))
         )
         submit_btn.click()
-
-        print("সাইনআপ ফর্ম সাবমিট করা হয়েছে।")
+        
+        print("সাইনআপ বাটনে ক্লিক করা হয়েছে। OTP আসার অপেক্ষায়...")
         return True
 
     except TimeoutException:
-        print("সমস্যা: ইনস্টাগ্রামের ফর্ম লোড হতে বেশি সময় নিচ্ছে।")
+        print("ফর্ম লোড হতে সময় নিয়েছে। পেজের স্ক্রিনশট নিন এবং ম্যানুয়ালি চেক করুন।")
+        driver.save_screenshot("signup_error.png")
         return False
     except Exception as e:
-        print(f"সাইনআপ অটোমেশন এরর: {type(e).__name__}: {e}")
+        print(f"সাইনআপ এরর: {e}")
         return False
 
-def handle_otp_verification(driver, inbox_info, timeout_seconds=90):
-    """ইমেইলে আসা OTP খুঁজে বের করে এবং ব্রাউজারে ইনপুট করে"""
+def handle_otp_verification(driver, inbox_info, timeout_seconds=120):
+    """OTP ভেরিফিকেশন"""
     start_time = time.time()
 
     while time.time() - start_time < timeout_seconds:
         messages = fetch_inbox_messages(inbox_info)
 
         if messages:
-            # সর্বশেষ মেসেজটি নেওয়া
             latest_msg = messages[-1]
             body = latest_msg.get("body", "")
+            
+            # মেসেজটি পড়া হয়েছে কিনা চেক করা (যদি আগে পড়ে থাকে, এড়িয়ে যাবে)
+            if not latest_msg.get("read"):
+                otp_code = extract_otp_from_message(body)
 
-            otp_code = extract_otp_from_message(body)
+                if otp_code:
+                    print(f"OTP পাওয়া গেছে: {otp_code}")
+                    return enter_otp_in_browser(driver, otp_code)
 
-            if otp_code:
-                print(f"OTP পাওয়া গেছে: {otp_code}")
-                return enter_otp_in_browser(driver, otp_code)
+        time.sleep(5) # প্রতি ৫ সেকেন্ডে চেক করবে
 
-        # ৫ সেকেন্ড পরপর চেক করা
-        time.sleep(5)
-
-    print("OTP পেতে টাইম আউট হয়েছে।")
+    print("OTP পেতে সময় শেষ।")
     return False
 
-# (4/5)
 def enter_otp_in_browser(driver, otp_code):
-    """ব্রাউজারে OTP ইনপুট করে সাবমিট করে"""
+    """ব্রাউজারে OTP ইনপুট"""
     try:
-        # OTP ইনপুট বক্স আসা পর্যন্ত অপেক্ষা
-        # নোট: Instagram-এর ক্লাস নেম বারবার বদলায়, এটি সর্বশেষ জ্ঞাত ক্লাস
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "i0vgv6"))
+        # OTP ফিল্ড খোঁজা
+        # ইনস্টাগ্রামে OTP ফিল্ড সাধারণত class='i0vgv6' বা input type='tel' হতে পারে
+        otp_inputs = WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located((By.XPATH, "//input[@type='tel']"))
         )
 
-        otp_inputs = driver.find_elements(By.CLASS_NAME, "i0vgv6")
+        if not otp_inputs:
+            # যদি input[type='tel'] না পাওয়া যায়, তাহলে ক্লাস নেম দিয়ে চেষ্টা করি
+            otp_inputs = driver.find_elements(By.CLASS_NAME, "i0vgv6")
 
         if len(otp_inputs) == 1:
-            # যদি একটা বক্সে পুরো কোড দিতে হয়
+            # একটি মাত্র বক্স
             otp_inputs[0].clear()
             otp_inputs[0].send_keys(otp_code)
         elif len(otp_inputs) == len(otp_code):
-            # যদি প্রতিটি ডিজিটের জন্য আলাদা বক্স থাকে
+            # আলাদা আলাদা বক্স (যেমন: _ _ _ _)
             for i, char in enumerate(otp_code):
-                otp_inputs[i].send_keys(char)
+                if i < len(otp_inputs):
+                    otp_inputs[i].send_keys(char)
         else:
-            # ব্যাকআপ: বডি ট্যাগে সরাসরি টাইপ করা
+            # ব্যাকআপ পদ্ধতি: বডি ট্যাগে ফোকাস করে টাইপ করা
+            driver.find_element(By.TAG_NAME, "body").click()
             driver.find_element(By.TAG_NAME, "body").send_keys(otp_code)
 
-        # সাবমিট বাটন চাপা
         time.sleep(2)
-        try:
-            verify_btn = driver.find_element(By.XPATH, "//button[contains(@class, 'sqdOP') and contains(@class, 'L3NKy')]")
-            verify_btn.click()
-            print("OTP সাবমিট করা হয়েছে।")
-            return True
-        except NoSuchElementException:
-            # Enter চাপ দিয়ে সাবমিট করার চেষ্টা
-            driver.find_element(By.TAG_NAME, "body").send_keys(Keys.RETURN)
-            print("Enter কী দিয়ে OTP সাবমিট করা হয়েছে।")
-            return True
+
+        # সাবমিট বাটন ক্লিক
+        # OTP সাবমিট বাটন সাধারণত 'Next' বা 'Done' লেখা থাকে
+        verify_btn = driver.find_element(By.XPATH, "//button[contains(@class, 'sqdOP') and contains(@class, 'L3NKy')]")
+        verify_btn.click()
+        
+        print("OTP সাবমিট করা হয়েছে।")
+        return True
 
     except Exception as e:
         print(f"OTP ইনপুট করতে সমস্যা: {e}")
+        # ডিবাগিংয়ের জন্য স্ক্রিনশট
+        driver.save_screenshot("otp_error.png")
         return False
 
-# --- মূল বট লজিক ---
-
 def run_bot():
-    print("===== Instagram Auto Signup Bot =====")
-    print("বটটি নিজে থেকেই:")
-    print("1. টেম্প ইমেইল তৈরি করবে।")
-    print("2. Instagram সাইনআপ করবে।")
-    print("3. OTP চেক করে ইনপুট করবে।")
-    print("-" * 30)
-
-    # ইউজার থেকে তথ্য নেওয়া
+    print("===== Instagram Auto Signup Bot (Enhanced) =====")
+    
     try:
-        full_name = input("অ্যাকাউন্টের জন্য পুরো নাম দিন: ").strip()
-        password = input("অ্যাকাউন্টের পাসওয়ার্ড দিন: ").strip()
-
+        full_name = input("নাম দিন: ").strip()
+        password = input("পাসওয়ার্ড দিন: ").strip()
+        
         if not full_name or not password:
-            print("নাম এবং পাসওয়ার্ড খালি রাখা যাবে না।")
+            print("নাম এবং পাসওয়ার্ড প্রয়োজন।")
             return
-    except Exception:
-        return
 
-    # ধাপ ১: ইমেইল তৈরি
-    print("\n[১/৫] টেম্পোরারি ইমেইল তৈরি করা হচ্ছে...")
-    inbox_info = create_email()
-    if not inbox_info:
-        print("ইমেইল তৈরি ব্যর্থ।")
-        return
-    print(f"ইমেইল: {inbox_info['address']}")
+        # ১. ইমেইল তৈরি
+        print("\n[১] ইমেইল জেনারেট করা হচ্ছে...")
+        inbox_info = create_email()
+        if not inbox_info:
+            print("ইমেইল তৈরি ব্যর্থ।")
+            return
+        print(f"ইমেইল: {inbox_info['address']}")
 
-    # ধাপ ২: ব্রাউজার সেটআপ
-    print("\n[২/৫] ব্রাউজার চালু করা হচ্ছে...")
-    driver = None
-    try:
+        # ২. ব্রাউজার চালু
+        print("[২] ব্রাউজার চালু করা হচ্ছে...")
         driver = setup_driver()
-
-        # ধাপ ৩: সাইনআপ ফর্ম ফিল করা
-        print("\n[৩/৫] Instagram সাইনআপ ফর্ম পূরণ করা হচ্ছে...")
-        success = perform_instagram_signup(driver, inbox_info['address'], full_name, password)
-
-        if not success:
-            print("সাইনআপ ফর্ম সাবমিট করা যায়নি।")
+        if not driver:
             return
 
-        # ধাপ ৪: OTP হ্যান্ডল করা
-        print("\n[৪/৫] ইমেইলে OTP আসার অপেক্ষা করা হচ্ছে... (সর্বোচ্চ ৯০ সেকেন্ড)")
-        otp_success = handle_otp_verification(driver, inbox_info, timeout_seconds=90)
+        try:
+            # ৩. সাইনআপ
+            print("[৩] সাইনআপ ফর্ম পূরণ...")
+            success = perform_instagram_signup(driver, inbox_info['address'], full_name, password)
+            
+            if not success:
+                input("\nসাইনআপ ব্যর্থ। ব্রাউজার খোলা থাকবে। Enter চাপুন বন্ধ করতে।")
+                return
 
-        if otp_success:
-            print("\n[৫/৫] ভেরিফিকেশন সম্পন্ন!")
-            print("অ্যাকাউন্ট তৈরি হয়েছে।")
-            print(f"ইমেইল: {inbox_info['address']}")
-            print(f"পাসওয়ার্ড: {password}")
+            # ৪. OTP ভেরিফিকেশন
+            print("[৪] OTP ভেরিফিকেশন শুরু (১২০ সেকেন্ড)...")
+            otp_success = handle_otp_verification(driver, inbox_info, timeout_seconds=120)
 
-            # রেজাল্ট দেখার জন্য ব্রাউজার খোলা রাখা
-            input("\nব্রাউজার বন্ধ করতে Enter চাপুন...")
-        else:
-            print("OTP ভেরিফিকেশন ব্যর্থ বা টাইম আউট হয়েছে।")
+            if otp_success:
+                print("\n===== সাফল্য! অ্যাকাউন্ট তৈরি হয়েছে =====")
+                print(f"ইমেইল: {inbox_info['address']}")
+                print(f"পাসওয়ার্ড: {password}")
+                input("\nব্রাউজার বন্ধ করতে Enter চাপুন...")
+            else:
+                print("\nOTP ভেরিফিকেশন ব্যর্থ।")
+
+        finally:
+            driver.quit()
 
     except Exception as e:
         print(f"ক্রিটিক্যাল এরর: {e}")
-    finally:
-        if driver:
-            driver.quit()
 
-# (5/5)
 if __name__ == "__main__":
     run_bot()
